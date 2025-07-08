@@ -4,11 +4,11 @@ This is a real-time interactive Snake & Ladder game. It syncs with a microcontro
 
 🚀 Getting Started
 
-1.Prerequisites
+1.Prerequisites,
   Install Node.js from https://nodejs.org if not already installed.
 
-2.Install dependencies
+2.Install dependencies,
   npm install
 
-3.Run the development server
+3.Run the development server,
   npm run dev
