@@ -11,6 +11,7 @@ WebServer server(80);
 String currentGameId = "";
 bool gameActive = false;
 void sendGameSetupToMega(String mode, String gameId, String p1Name, String p1Color, String p2Name, String p2Color) {
+  // Send game setup data to Mega via Serial2
   Serial2.println("GAME_SETUP");
   Serial2.println("MODE:" + mode);
   Serial2.println("GAMEID:" + gameId);
@@ -18,7 +19,7 @@ void sendGameSetupToMega(String mode, String gameId, String p1Name, String p1Col
   Serial2.println("P1COLOR:" + p1Color);
   Serial2.println("P2NAME:" + p2Name);
   Serial2.println("P2COLOR:" + p2Color);
-  Serial2.println("START");
+  Serial2.println("START");  // Signal to Mega that setup is complete
   
   Serial.println("Game setup sent to Mega:");
   Serial.println("  Mode: " + mode + ", GameID: " + gameId);
@@ -26,6 +27,7 @@ void sendGameSetupToMega(String mode, String gameId, String p1Name, String p1Col
   Serial.println("  P2: " + p2Name + " (" + p2Color + ")");
 }
 
+// === Handle Game Setup from Web App ===
 void handleGameSetup() {
   if (server.method() == HTTP_POST) {
     StaticJsonDocument<512> doc;
@@ -37,9 +39,10 @@ void handleGameSetup() {
       return;
     }
 
+    // Extract game data matching backend format
     String mode = doc["mode"].as<String>();
     String gameId = doc["gameId"].as<String>();
-    currentGameId = gameId;
+    currentGameId = gameId; // Store for score updates
     gameActive = true;
 
     JsonArray players = doc["players"];
@@ -58,6 +61,7 @@ void handleGameSetup() {
     Serial.println("PLAYER1: " + p1Name + " (" + p1Color + ")");
     Serial.println("PLAYER2: " + p2Name + " (" + p2Color + ")");
 
+    // Forward to Mega
     sendGameSetupToMega(mode, gameId, p1Name, p1Color, p2Name, p2Color);
     
     server.send(200, "application/json", "{\"message\":\"Game setup sent to Arduino\"}");
@@ -66,6 +70,7 @@ void handleGameSetup() {
   }
 }
 
+// === Send Player Score to Web App Backend ===
 void sendScoreToWebApp(int player, int diceValue) {
   if (currentGameId == "") {
     Serial.println("No gameId set, score not sent to web app");
@@ -77,11 +82,13 @@ void sendScoreToWebApp(int player, int diceValue) {
     return;
   }
 
+  // Construct the backend URL - update this IP to match your backend server
   String backend_url = "http://192.168.4.2:5000/api/update-position/" + currentGameId;
   HTTPClient http;
   http.begin(backend_url);
   http.addHeader("Content-Type", "application/json");
   
+  // Create JSON payload - matches backend format
   String payload = "{\"dice\":" + String(diceValue) + ",\"player\":" + String(player) + "}";
   int httpCode = http.POST(payload);
   
@@ -102,12 +109,13 @@ void sendScoreToWebApp(int player, int diceValue) {
   http.end();
 }
 
+// === Handle Play Again Command from Web App ===
 void handlePlayAgain() {
   if (server.method() == HTTP_POST) {
     if (currentGameId != "") {
       Serial2.println("PLAY_AGAIN");
       Serial.println("Play Again command sent to Mega");
-      gameActive = true;
+      gameActive = true; // Reactivate game
       server.send(200, "application/json", "{\"message\":\"Play again sent to Arduino\"}");
     } else {
       Serial.println("Play Again requested but no active game");
@@ -118,12 +126,14 @@ void handlePlayAgain() {
   }
 }
 
+// === Handle End Game Command from Web App ===
 void handleEndGame() {
   if (server.method() == HTTP_POST) {
     if (currentGameId != "") {
       Serial2.println("END_GAME");
       Serial.println("End Game command sent to Mega");
       
+      // Clear game state
       gameActive = false;
       currentGameId = "";
       
@@ -137,12 +147,14 @@ void handleEndGame() {
   }
 }
 
+// === Handle Reset Game Command from Arduino Mega ===
 void handleResetFromMega() {
   Serial.println("Hardware reset signal received from Arduino Mega");
   
   if (currentGameId != "") {
     Serial.println("Forwarding reset signal to Web App...");
     
+    // Send reset signal to web app
     bool resetSuccess = sendResetToWebApp();
     
     if (resetSuccess) {
@@ -151,6 +163,7 @@ void handleResetFromMega() {
       Serial.println("Failed to send reset signal to Web App");
     }
     
+    // Clear ESP32 game state regardless of web app response
     String previousGameId = currentGameId;
     currentGameId = "";
     gameActive = false;
@@ -159,21 +172,24 @@ void handleResetFromMega() {
     Serial.println("Previous Game ID: " + previousGameId + " -> Now: " + currentGameId);
   } else {
     Serial.println("Reset received but no active game ID stored");
-    gameActive = false;
+    gameActive = false; // Ensure game is marked as inactive
   }
 }
 
+// === Send Reset Signal to Web App Backend ===
 bool sendResetToWebApp() {
   if (currentGameId == "") {
     Serial.println("No gameId set, reset not sent to web app");
     return false;
   }
 
+  // Construct the backend URL for hardware reset
   String backend_url = "http://192.168.4.2:5000/api/hardware-reset/" + currentGameId;
   HTTPClient http;
   http.begin(backend_url);
   http.addHeader("Content-Type", "application/json");
   
+  // Create JSON payload with reset source information
   String payload = "{\"source\":\"arduino_mega\",\"timestamp\":\"" + String(millis()) + "\",\"gameId\":\"" + currentGameId + "\"}";
   int httpCode = http.POST(payload);
   
@@ -189,6 +205,7 @@ bool sendResetToWebApp() {
       Serial.println("Web App Response: " + response);
     }
     
+    // Consider 200-299 as success
     if (httpCode >= 200 && httpCode < 300) {
       success = true;
     }
@@ -200,6 +217,7 @@ bool sendResetToWebApp() {
   return success;
 }
 
+// === Get Current Game Status ===
 void handleGameStatus() {
   String status = "waiting";
   if (currentGameId != "" && gameActive) {
@@ -212,11 +230,13 @@ void handleGameStatus() {
   server.send(200, "application/json", response);
 }
 
+// === Health Check Endpoint ===
 void handleHealthCheck() {
   String healthStatus = "{\"status\":\"ESP32 Bridge Ready\",\"gameId\":\"" + currentGameId + "\",\"gameActive\":" + (gameActive ? "true" : "false") + ",\"uptime\":" + String(millis()) + "}";
   server.send(200, "application/json", healthStatus);
 }
 
+// === CORS Headers for Web App ===
 void handleCORS() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
@@ -224,22 +244,26 @@ void handleCORS() {
   server.send(200);
 }
 
+// === Setup Function ===
 void setup() {
-  Serial.begin(9600);
-  Serial2.begin(9600, SERIAL_8N1, 16, 17);
+  Serial.begin(9600);        // For Serial Monitor
+  Serial2.begin(9600, SERIAL_8N1, 16, 17);  // For Arduino Mega communication (pins 16=RX, 17=TX)
 
+  // Start WiFi Access Point
   WiFi.softAP(ssid, password);
   Serial.println("WiFi Access Point Started");
   Serial.println("SSID: " + String(ssid));
   Serial.println("Password: " + String(password));
   Serial.println("ESP32 IP Address: " + WiFi.softAPIP().toString());
 
+  // Setup HTTP Routes
   server.on("/game-setup", HTTP_POST, handleGameSetup);
   server.on("/play-again", HTTP_POST, handlePlayAgain);
   server.on("/end-game", HTTP_POST, handleEndGame);
   server.on("/game-status", HTTP_GET, handleGameStatus);
   server.on("/health", HTTP_GET, handleHealthCheck);
   
+  // Handle CORS preflight requests
   server.on("/game-setup", HTTP_OPTIONS, handleCORS);
   server.on("/play-again", HTTP_OPTIONS, handleCORS);
   server.on("/end-game", HTTP_OPTIONS, handleCORS);
@@ -261,13 +285,16 @@ void setup() {
   Serial.println();
   Serial.println("Waiting for Mega connection and web app requests...");
   
+  // Initialize game state
   currentGameId = "";
   gameActive = false;
 }
 
+// === Main Loop ===
 void loop() {
   server.handleClient();
 
+  // === Handle incoming data from Arduino Mega ===
   if (Serial2.available()) {
     String receivedData = Serial2.readStringUntil('\n');
     receivedData.trim();
@@ -275,15 +302,19 @@ void loop() {
     if (receivedData.length() > 0) {
       Serial.println("From Mega: " + receivedData);
 
+      // Handle reset signal from Mega
       if (receivedData == "RESET_GAME") {
         handleResetFromMega();
       }
+      // Handle other messages from Mega
       else {
+        // Parse score data from Mega (format: "player,diceValue")
         int commaIndex = receivedData.indexOf(',');
         if (commaIndex > 0) {
           int player = receivedData.substring(0, commaIndex).toInt();
           int diceValue = receivedData.substring(commaIndex + 1).toInt();
           
+          // Validate data before sending to web app
           if (player >= 1 && player <= 2 && diceValue >= 1 && diceValue <= 6) {
             Serial.println("Valid score - Player " + String(player) + " rolled " + String(diceValue));
             sendScoreToWebApp(player, diceValue);
@@ -291,8 +322,10 @@ void loop() {
             Serial.println("Invalid score data: Player=" + String(player) + ", Dice=" + String(diceValue));
           }
         } else {
+          // Handle other types of messages from Mega
           Serial.println("Info from Mega: " + receivedData);
           
+          // Check for other known commands
           if (receivedData.startsWith("ERROR:")) {
             Serial.println("Error from Mega: " + receivedData);
           } else if (receivedData.startsWith("STATUS:")) {
@@ -307,13 +340,17 @@ void loop() {
     }
   }
   
+  // Small delay to prevent overwhelming the system
   delay(10);
 }
 
+// === Additional Utility Functions ===
+
+// Function to check if ESP32 is connected to backend
 bool testBackendConnection() {
   HTTPClient http;
   http.begin("http://192.168.4.2:5000/api/health");
-  http.setTimeout(5000);
+  http.setTimeout(5000); // 5 second timeout
   
   int httpCode = http.GET();
   bool connected = (httpCode == 200);
@@ -324,6 +361,7 @@ bool testBackendConnection() {
   return connected;
 }
 
+// Function to send heartbeat to backend (optional)
 void sendHeartbeat() {
   if (currentGameId != "" && gameActive) {
     HTTPClient http;
@@ -340,3 +378,34 @@ void sendHeartbeat() {
     http.end();
   }
 }
+
+/*
+ * ESP32 BRIDGE COMPLETE CODE
+ * 
+ * FEATURES IMPLEMENTED:
+ * - Game Setup Communication (Web -> ESP32 -> Mega)
+ * - Score Updates (Mega -> ESP32 -> Web)
+ * - Play Again Command (Web -> ESP32 -> Mega)
+ * - End Game Command (Web -> ESP32 -> Mega)
+ * - Hardware Reset Handling (Mega -> ESP32 -> Web)
+ * - Game State Management
+ * - Error Handling & Validation
+ * - CORS Support for Web App
+ * - Health Check Endpoint
+ * - Connection Status Monitoring
+ * 
+ * COMMUNICATION FLOW:
+ * 1. Web App -> ESP32: Game setup, play again, end game
+ * 2. ESP32 -> Mega: Forward commands via Serial2
+ * 3. Mega -> ESP32: Score updates, reset signals
+ * 4. ESP32 -> Web App: Score updates, reset notifications
+ * 
+ * ENDPOINTS:
+ * - POST /game-setup: Initialize game
+ * - POST /play-again: Restart game
+ * - POST /end-game: End current game
+ * - GET /game-status: Get current status
+ * - GET /health: System health check
+ * 
+ * READY FOR DEPLOYMENT
+ */

@@ -1,3 +1,8 @@
+// Complete Smart Snake & Ladder Game - FastLED Enhanced with Integrated Effects
+// Arduino Mega + ESP32 Communication + Enhanced LED Effects + Player Ring Control
+// Date: 2025-08-05 | User: dineTH2003-dev
+// Features: FastLED, ESP32 Communication, Exact Win Logic, Enhanced Ring Effects
+
 #include <FastLED.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -5,6 +10,7 @@
 #include <DFRobotDFPlayerMini.h>
 #include <math.h>
 
+// FastLED Configuration
 #define GRID_PIN 23
 #define DECO_PIN 29
 #define RING_PIN 31
@@ -12,10 +18,12 @@
 #define NUM_DECO_LEDS 75
 #define NUM_RING_LEDS 32
 
+// LED Arrays
 CRGB gridLEDs[NUM_GRID_LEDS];
 CRGB decoLEDs[NUM_DECO_LEDS];
 CRGB ringLEDs[NUM_RING_LEDS];
 
+// Traditional LED strips for ladder/snake
 #include <Adafruit_NeoPixel.h>
 #define LADDER_PIN 27
 #define SNAKE_PIN 25
@@ -25,6 +33,7 @@ CRGB ringLEDs[NUM_RING_LEDS];
 Adafruit_NeoPixel ladderLEDs(NUM_LADDER_LEDS, LADDER_PIN, NEO_GRB + NEO_KHZ800);
 Adafruit_NeoPixel snakeLEDs(NUM_SNAKE_LEDS, SNAKE_PIN, NEO_GRB + NEO_KHZ800);
 
+// ESP32 Communication Variables
 String mode = "";
 String gameId = "";
 String p1Name = "";
@@ -35,12 +44,14 @@ bool receivingSetup = false;
 bool setupComplete = false;
 bool gameStarted = false;
 
+// Hardware Setup
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 SoftwareSerial mp3Serial(10, 11);
 DFRobotDFPlayerMini mp3;
 bool soundInitialized = false;
 bool backgroundMusicPlaying = false;
 
+// Sound definitions
 #define SOUND_BACKGROUND 1
 #define SOUND_WIN        6
 #define SOUND_SNAKE      3
@@ -48,6 +59,7 @@ bool backgroundMusicPlaying = false;
 #define SOUND_RESET      5
 #define SOUND_INVALID    7
 
+// Pin Configuration
 const int button1Pin = 2;
 const int button2Pin = 3;
 const int resetButtonPin = 4;
@@ -57,18 +69,21 @@ const int motorPin2 = 9;
 const int motorEN = 7;
 const int hallPins[6] = {41, 43, 45, 47, 49, 51};
 
+// Motor Control with Speed-based timing
 const int MOTOR_MAX_SPEED = 90;
 const int MOTOR_MIN_SPEED = 60;
-const int ROBOT_MAX_SPEED = 80;
-const int ROBOT_MIN_SPEED = 45;
+const int ROBOT_MAX_SPEED = 80;         // FIXED: Changed from 980 to 80
+const int ROBOT_MIN_SPEED = 45;         // NEW: Robot min speed (slower start)
 const int PRECISION_READING_SAMPLES = 10;
 int lastMotorSpeed = 0;
 unsigned long motorAccelerationTime = 0;
 unsigned long motorRunTime = 0;
 
-const int GRID_BRIGHTNESS = 10;
-const int PLAYER_BRIGHTNESS = 255;
+// Brightness control constants - ADDED
+const int GRID_BRIGHTNESS = 10;         // Dimmer grid background
+const int PLAYER_BRIGHTNESS = 255;      // Bright player positions
 
+// Game State Variables (1-based indexing)
 struct Player {
   String name;
   String colorStr;
@@ -89,13 +104,16 @@ unsigned long lastPlayAgainCheck = 0;
 int errorCount = 0;
 const int MAX_ERRORS = 3;
 
+// Game Mode Variables
 bool singlePlayerMode = false;
 bool dualPlayerMode = false;
 
+// Single Player Mode Variables
 unsigned long lastAutoTurnTime = 0;
 const unsigned long AUTO_TURN_DELAY = 3000;
 bool autoTurnInProgress = false;
 
+// LED Animation Variables
 uint8_t rainbowHue = 0;
 int decoAnimationMode = 0;
 int decoAnimationStep = 0;
@@ -105,10 +123,12 @@ int decoHue = 0;
 int decoBreathLevel = 30;
 bool decoBreathDir = true;
 
+// Player Ring LED Variables
 unsigned long lastRingUpdate = 0;
-const int RING_BLINK_SPEED = 300;
+const int RING_BLINK_SPEED = 300; // Blink every 300ms
 bool ringBlinkState = false;
 
+// Pre-game rainbow timing
 unsigned long lastRainbowUpdate = 0;
 
 const uint32_t DECO_COLORS[] = {
@@ -117,6 +137,7 @@ const uint32_t DECO_COLORS[] = {
 };
 const int NUM_DECO_COLORS = sizeof(DECO_COLORS) / sizeof(DECO_COLORS[0]);
 
+// Game Board Structures (1-based positions)
 struct Jump {
   int start;
   int end;
@@ -137,6 +158,7 @@ Jump snakes[] = {
 const int numLadders = sizeof(ladders) / sizeof(ladders[0]);
 const int numSnakes = sizeof(snakes) / sizeof(snakes[0]);
 
+// === EXACT WIN LOGIC FUNCTIONS ===
 bool isValidMove(int currentPos, int diceRoll) {
   int targetPosition = currentPos + diceRoll;
   return targetPosition <= 100;
@@ -150,12 +172,13 @@ int calculateFinalPosition(int currentPos, int diceRoll) {
   }
   
   if (targetPosition > 100) {
-    return currentPos;
+    return currentPos; // NO MOVEMENT
   }
   
   return targetPosition;
 }
 
+// === COLOR CONVERSION FUNCTIONS ===
 CRGB parseHexColor(String hexColor) {
   if (hexColor.startsWith("#")) {
     hexColor = hexColor.substring(1);
@@ -169,6 +192,7 @@ CRGB parseHexColor(String hexColor) {
   return CRGB(r, g, b);
 }
 
+// === SOUND FUNCTIONS ===
 void initializeSound() {
   mp3Serial.begin(9600);
   delay(500);
@@ -233,13 +257,16 @@ void playEffectThenResumeMusic(int effect) {
   }
 }
 
+// === PRE-GAME RAINBOW EFFECTS WITH SNAKE & LADDER ===
 void updatePreGameRainbow() {
   if (millis() - lastRainbowUpdate > 50) {
+    // Grid rainbow effect
     for (int i = 0; i < NUM_GRID_LEDS; i++) {
       uint8_t hue = rainbowHue + (i * 255 / NUM_GRID_LEDS);
       gridLEDs[i] = CHSV(hue, 255, 255);
     }
     
+    // Snake and Ladder rainbow effects
     for (int i = 0; i < NUM_LADDER_LEDS; i++) {
       uint8_t hue = (rainbowHue + i * 10) % 255;
       ladderLEDs.setPixelColor(i, ladderLEDs.gamma32(ladderLEDs.ColorHSV(hue * 256, 255, 255)));
@@ -250,6 +277,7 @@ void updatePreGameRainbow() {
       snakeLEDs.setPixelColor(i, snakeLEDs.gamma32(snakeLEDs.ColorHSV(hue * 256, 255, 255)));
     }
     
+    // Deco and ring solid white during pre-game
     fill_solid(decoLEDs, NUM_DECO_LEDS, CRGB::White);
     fill_solid(ringLEDs, NUM_RING_LEDS, CRGB::White);
     
@@ -262,6 +290,7 @@ void updatePreGameRainbow() {
   }
 }
 
+// === DECORATIVE LED FUNCTIONS ===
 uint32_t colorHSV(int hue) {
   hue = hue % 1536;
   int region = hue / 256;
